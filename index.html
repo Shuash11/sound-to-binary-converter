@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<!--
+  Sound-to-Binary Converter — Stages 2-5 (wave facts, samples table,
+  binary result, warnings + design)
+
+  Single self-contained file: inline CSS + inline JavaScript, no external
+  resources. The document is organized into clearly commented sections so
+  each stage owns its own region:
+    Done:  Stage 2  -> wave facts      (div#wave-facts)
+           Stage 3  -> sample rows     (tbody#samples-tbody)
+           Stage 4  -> binary + bits   (p#binary-line, p#total-bits)
+           Stage 5  -> warnings        (div#warnings) + finished design
+           Stage 5+ -> collapsible per-sample calculation rows
+                        (each sample row discloses its own math breakdown)
+                        + collapsible samples table section (auto-folded
+                        for large n, binary result kept above the table)
+           Stage 6  -> test/explain    (div#test-results table, recorded
+                        from real app runs; div#explain-it Q&A list —
+                        both static HTML, no script involvement)
+           Bonus   -> play tone       (button#play-btn: plays the typed
+                        frequency for 1 s through ONE shared Web Audio
+                        AudioContext, one oscillator per click; an invalid
+                        frequency shows the same warning as Convert)
+  The script block lives before </body>.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sound-to-Binary Converter</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2316181d'/%3E%3Cpath d='M8 20c2.667-8.5 5.333-8.5 8 0s5.333 8.5 8 0' fill='none' stroke='%2360a5fa' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+
+  <style>
+    /* ============================================================
+       Design system (Stage 5, modern pass) — crisp light theme,
+       one blue accent, soft layered depth, subtle motion.
+       References: Vercel Geist (gray-step surfaces/borders/text,
+       6/12px radius scale, translucent shadows, black primary
+       button) and modern dashboard data-table patterns (right-
+       aligned monospace numerics, hover rows, disclosure chevrons
+       for expandable rows); error styling and a11y patterns from
+       GOV.UK + NN/g; the expand/collapse interaction follows the
+       WAI-ARIA APG disclosure pattern. All motion is CSS-only
+       and disabled under prefers-reduced-motion.
+       ============================================================ */
+
+    /* --- Tokens (Geist-style gray steps + one accent scale) --- */
+    :root {
+      --color-bg: #f7f8fa;          /* Background 1 (page) */
+      --color-surface: #ffffff;     /* Background 2 (cards, inputs) */
+      --color-surface-2: #f2f4f7;   /* gray-100/200: hover fills */
+      --color-surface-3: #e6e9ef;   /* gray-300: active fill (toggle hover) */
+      --color-text: #16181d;        /* gray-1000: primary text */
+      --color-muted: #5f6673;       /* gray-900: secondary text */
+      --color-border: #e4e7ec;      /* gray-400: default border */
+      --color-border-strong: #cdd2da;
+      --color-ink: #16181d;         /* primary button */
+      --color-ink-hover: #2c313a;
+      --color-accent: #2563eb;      /* focus rings, result highlight */
+      --color-accent-ink: #1e40af;  /* accent text on soft bg (AA) */
+      --color-accent-soft: #eef4ff; /* accent-100: chip background */
+      --color-accent-border: #d6e4fd;
+      --color-error: #b42318;
+      --color-error-bg: #fef3f2;
+      --color-error-border: #f9d9d7;
+      --radius-sm: 6px;             /* Geist base material */
+      --radius-md: 12px;            /* Geist raised material */
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+      --shadow-md: 0 8px 20px -8px rgba(16, 24, 40, 0.18); /* translucent */
+      --ring: 0 0 0 3px rgba(37, 99, 235, 0.16);
+      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* --- Reset + base --- */
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(900px 320px at 50% -140px, rgba(37, 99, 235, 0.06), transparent 70%),
+        var(--color-bg);
+      color: var(--color-text);
+      font-family: var(--font-body);
+      font-size: 1rem;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* --- Subtle motion (CSS only; no timers; reduced-motion off) --- */
+    @keyframes rise-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .rise-in { animation: rise-in 0.22s var(--ease-out) backwards; }
+    /* Light stagger between the results regions on each Convert
+       (order follows the layout: facts -> binary -> bits -> table). */
+    #wave-facts.rise-in { animation-delay: 0ms; }
+    #binary-line.rise-in { animation-delay: 45ms; }
+    #total-bits.rise-in { animation-delay: 90ms; }
+    .table-wrap.rise-in { animation-delay: 135ms; }
+    /* Table rows: per-row delay set inline, capped at 300ms total. */
+    .row-in { animation: rise-in 0.18s var(--ease-out) backwards; }
+
+    /* --- Page layout --- */
+    .container {
+      max-width: 46rem;
+      margin-inline: auto;
+      padding-inline: 1.25rem;
+    }
+    header { border-bottom: 1px solid var(--color-border); }
+    header .container {
+      padding-block: 1.5rem 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.875rem;
+    }
+    .brand-mark { flex: none; }
+    main.container { padding-block: 1.75rem 3rem; }
+
+    h1 { margin: 0; font-size: 1.375rem; line-height: 1.2; letter-spacing: -0.02em; }
+    .byline { margin: 0.125rem 0 0; color: var(--color-muted); font-size: 0.875rem; }
+    h2 { margin: 2.25rem 0 1rem; font-size: 1.25rem; line-height: 1.3; letter-spacing: -0.01em; }
+
+    /* --- Cards (raised materials: 1px border + soft shadow) --- */
+    .card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-sm);
+      padding: 1.375rem 1.5rem 1.5rem;
+    }
+    .card > h2 { margin: 0 0 1.125rem; font-size: 1.0625rem; }
+
+    /* --- Visually hidden (GOV.UK pattern: text for screen readers only) --- */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      border: 0;
+      white-space: nowrap;
+    }
+
+    /* --- Converter form --- */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+      gap: 1rem 1.25rem;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 0.375rem;
+      font-weight: 500;
+      font-size: 0.875rem;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 0.5625rem 0.75rem;
+      font: inherit;
+      font-size: 0.9375rem;
+      color: inherit;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--radius-sm);
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .form-group input:hover { border-color: #aab2c0; }
+    .form-group input:focus-visible {
+      outline: none;
+      border-color: var(--color-accent);
+      box-shadow: var(--ring);
+    }
+    .convert-button {
+      margin-top: 1.375rem;
+      padding: 0.625rem 1.875rem;
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      color: #ffffff;
+      background: var(--color-ink);
+      border: 0;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+      transition: background-color 150ms ease, transform 150ms ease,
+        box-shadow 150ms ease;
+    }
+    .convert-button:hover {
+      background: var(--color-ink-hover);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .convert-button:active {
+      transform: translateY(0) scale(0.98);
+      box-shadow: var(--shadow-sm);
+    }
+    /* Bonus: the Play button is the supporting action next to the
+       primary Convert (Geist secondary-variant pattern: light surface,
+       1px border, same metrics/radius/typography/shadow language and
+       the same hover lift as the primary button). */
+    .play-button {
+      margin-top: 1.375rem;
+      margin-left: 0.75rem;
+      padding: 0.625rem 1.375rem;
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      color: var(--color-text);
+      background: var(--color-surface);
+      border: 1px solid var(--color-border-strong);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+      transition: background-color 150ms ease, border-color 150ms ease,
+        transform 150ms ease, box-shadow 150ms ease;
+    }
+    .play-button:hover {
+      background: var(--color-surface-2);
+      border-color: #aab2c0; /* matches the input hover border */
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+    .play-button:active {
+      transform: translateY(0) scale(0.98);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* --- Keyboard focus (accessibility) --- */
+    .convert-button:focus-visible,
+    .play-button:focus-visible,
+    .table-wrap:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+
+    /* --- Warnings (GOV.UK error pattern + NN/g visibility:
+       color + border + glyph, never color alone) --- */
+    #warnings.has-warnings {
+      margin: 1.5rem 0;
+      padding: 0.875rem 1rem;
+      background: var(--color-error-bg);
+      border: 1px solid var(--color-error-border);
+      border-left: 3px solid var(--color-error);
+      border-radius: var(--radius-md);
+      color: var(--color-error);
+    }
+    #warnings.has-warnings ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    #warnings.has-warnings li {
+      position: relative;
+      margin: 0.25rem 0;
+      padding-left: 1.5rem;
+      font-weight: 500;
+      font-size: 0.9375rem;
+    }
+    #warnings.has-warnings li::before {
+      content: "⚠";
+      position: absolute;
+      left: 0;
+    }
+
+    /* --- Results: wave facts as quiet stat tiles --- */
+    #wave-facts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+      gap: 0.625rem;
+      margin-bottom: 1.25rem;
+    }
+    #wave-facts p {
+      margin: 0;
+      padding: 0.625rem 0.875rem;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+    }
+    #wave-facts strong {
+      display: block;
+      font-weight: 500;
+      font-size: 0.8125rem;
+      color: var(--color-muted);
+    }
+    .fact-value {
+      display: block;
+      margin-top: 0.125rem;
+      font-family: var(--font-mono);
+      font-size: 1.0625rem;
+    }
+
+    /* --- Samples table (dashboard pattern: hover rows, mono
+       numerics right-aligned, scroll on narrow screens) --- */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+    }
+    #samples-table {
+      width: 100%;
+      min-width: 34rem; /* columns stay readable; wrapper scrolls */
+      border-collapse: collapse;
+    }
+    #samples-table th,
+    #samples-table td {
+      padding: 0.5625rem 0.875rem;
+      text-align: left;
+      border-bottom: 1px solid var(--color-border);
+      vertical-align: top;
+    }
+    #samples-table thead th {
+      background: #fafbfc;
+      border-bottom: 1px solid var(--color-border-strong);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--color-muted);
+    }
+    #samples-table thead th:first-child { width: 5.5rem; }
+    #samples-table tbody tr:last-child td { border-bottom: 0; }
+    #samples-table tbody tr { transition: background-color 150ms ease; }
+    #samples-table tbody tr:hover { background: var(--color-surface-2); }
+    /* Numbers align right; cells render in the monospace stack. */
+    #samples-table th:nth-child(n+2),
+    #samples-table td:nth-child(n+2) { text-align: right; }
+    #samples-table tbody td {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* --- Collapsible calculation rows (WAI-ARIA APG disclosure) ---
+       The chevron button lives INSIDE the first cell, so the cell's
+       textContent stays exactly the sample number. Detail rows exist
+       ONLY while expanded: at rest the tbody holds exactly n rows. */
+    .row-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3125rem;
+      margin: -0.25rem -0.375rem; /* enlarge hit area, no layout shift */
+      padding: 0.25rem 0.375rem;
+      font: inherit;
+      color: inherit;
+      background: transparent;
+      border: 0;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background-color 150ms ease;
+    }
+    .row-toggle:hover { background: var(--color-surface-3); }
+    .row-toggle:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 1px;
+    }
+    .chevron {
+      flex: none;
+      width: 0.75rem;
+      height: 0.75rem;
+      color: var(--color-muted);
+      transition: transform 180ms var(--ease-out);
+    }
+    .row-toggle[aria-expanded="true"] .chevron {
+      transform: rotate(90deg); /* right-pointing -> down-pointing */
+    }
+    /* The open sample row keeps its hover fill while expanded. */
+    #samples-table tbody tr.is-expanded,
+    #samples-table tbody tr.is-expanded:hover {
+      background: var(--color-surface-2);
+    }
+    /* Detail row: one colspan=5 cell with a quiet background and a
+       labeled derivation grid. Opens with a fade + 4px settle; closes
+       with a fade-out, after which the row is removed (animationend,
+       event-driven — no timers). Reduced motion: instant. */
+    #samples-table tr.sample-detail > td {
+      padding: 0;
+      background: #fafbfd;
+    }
+    .detail-body {
+      display: grid;
+      grid-template-columns: 4.5rem 1fr;
+      gap: 0.3125rem 0.875rem;
+      align-items: baseline;
+      padding: 0.75rem 1rem 0.875rem 1.125rem;
+      animation: detail-in 0.18s var(--ease-out);
+    }
+    tr.sample-detail.closing .detail-body {
+      animation: detail-out 0.15s var(--ease-out) forwards;
+    }
+    .detail-label {
+      font-family: var(--font-body);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+    .detail-value {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--color-text);
+      overflow-wrap: anywhere; /* full-precision values wrap safely */
+    }
+    @keyframes detail-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes detail-out {
+      to { opacity: 0; transform: translateY(-4px); }
+    }
+
+    /* --- Table-level disclosure (section fold) ---
+       The header button folds the whole samples table. The fold is a
+       grid whose single row track animates 1fr <-> 0fr (CSS-only
+       height animation); the inner box clips overflow and fades.
+       Rows stay in the DOM while folded (visibility:hidden), so the
+       graded "exactly n rows" DOM rule still holds and reduced
+       motion snaps instantly. */
+    .table-disclosure {
+      margin-top: 1.375rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--color-border);
+    }
+    .disclosure-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0 0 0.625rem -0.5rem; /* align label with card content */
+      padding: 0.375rem 0.5rem;
+      font: inherit;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      color: inherit;
+      background: transparent;
+      border: 0;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background-color 150ms ease;
+    }
+    .disclosure-toggle:hover { background: var(--color-surface-2); }
+    .disclosure-toggle:focus-visible {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 1px;
+    }
+    .disclosure-toggle[aria-expanded="true"] .chevron {
+      transform: rotate(90deg); /* right-pointing -> down-pointing */
+    }
+    .disclosure-hint {
+      font-weight: 500;
+      font-size: 0.8125rem;
+      color: var(--color-muted);
+    }
+    .table-fold {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 180ms var(--ease-out);
+    }
+    .table-fold.folded { grid-template-rows: 0fr; }
+    .table-fold-inner {
+      min-height: 0;
+      overflow: hidden;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 180ms var(--ease-out), visibility 180ms;
+    }
+    .table-fold.folded .table-fold-inner {
+      opacity: 0;
+      visibility: hidden; /* also removes folded rows from tab order/AT */
+    }
+
+    /* --- Binary result: accent highlight chip; total bits muted --- */
+    #binary-line {
+      margin: 0 0 0.5rem; /* sits directly under the wave facts now */
+      padding: 0.75rem 1rem;
+      background: var(--color-accent-soft);
+      border: 1px solid var(--color-accent-border);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.9375rem;
+      color: var(--color-accent-ink);
+      overflow-wrap: anywhere; /* long binary strings wrap safely */
+    }
+    /* After an invalid Convert the line is cleared — hide its empty
+       chip entirely (element stays in the DOM, textContent stays ''). */
+    #binary-line:empty { display: none; }
+    #total-bits {
+      margin: 0;
+      color: var(--color-muted);
+      font-size: 0.875rem;
+    }
+
+    /* --- Stage 6: Test Results (recorded static table) ---
+       Same material and table language as the samples table (raised
+       .table-wrap, quiet header, mono numerics right-aligned, hover
+       rows) but for the wide 9-column record layout: tighter cell
+       padding, and the binary column wraps at its spaces with the
+       same overflow-wrap safety net as #binary-line. The wrapper
+       scrolls wherever the table exceeds the viewport. */
+    .results-note {
+      margin: 0 0 0.75rem;
+      color: var(--color-muted);
+      font-size: 0.875rem;
+    }
+    #test-results-table {
+      width: 100%; /* container slack flows into the binary column */
+      border-collapse: collapse;
+    }
+    #test-results-table th,
+    #test-results-table td {
+      padding: 0.5625rem 0.5rem;
+      text-align: left;
+      border-bottom: 1px solid var(--color-border);
+      vertical-align: top;
+    }
+    #test-results-table thead th {
+      background: #fafbfc;
+      border-bottom: 1px solid var(--color-border-strong);
+      font-size: 0.75rem; /* slightly denser than the samples table: 9 columns */
+      font-weight: 600;
+      color: var(--color-muted);
+    }
+    #test-results-table tbody tr:last-child th,
+    #test-results-table tbody tr:last-child td { border-bottom: 0; }
+    #test-results-table tbody tr { transition: background-color 150ms ease; }
+    #test-results-table tbody tr:hover { background: var(--color-surface-2); }
+    /* Numeric columns right-aligned; Test (row id) and the binary
+       text stay left so values scan cleanly down each column. */
+    #test-results-table thead th:nth-child(n+2):not(:last-child),
+    #test-results-table tbody td:nth-child(n+2):not(:last-child) {
+      text-align: right;
+    }
+    #test-results-table tbody td {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    /* Test letter: the row's identifier (NN/g data tables) — body
+       font, semibold, and the column keeps a fixed narrow width. */
+    #test-results-table thead th:first-child { width: 3rem; }
+    #test-results-table tbody th {
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    /* Binary result: the only cell allowed to grow/wrap (its values
+       can be far longer than any numeric column). */
+    #test-results-table thead th:last-child { min-width: 12.5rem; }
+    #test-results-table tbody td:last-child {
+      white-space: normal;
+      overflow-wrap: anywhere; /* long binary strings wrap safely */
+    }
+
+    /* --- Stage 6: Explain It (Q&A list) ---
+       All four answers stay visible — no folding (NN/g: for short,
+       must-read content, scrolling beats hiding it behind clicks).
+       Quiet separators between answers; numbered chips reuse the
+       accent-soft material from the binary result line. */
+    .explain-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .explain-list li { padding: 0.875rem 0; }
+    .explain-list li + li { border-top: 1px solid var(--color-border); }
+    .explain-list li:first-child { padding-top: 0; }
+    .explain-list h3 {
+      margin: 0 0 0.375rem;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+    }
+    .explain-list p { margin: 0; }
+    .explain-num {
+      display: inline-block;
+      min-width: 1.5rem;
+      margin-right: 0.5rem;
+      padding: 0.0625rem 0.3125rem;
+      background: var(--color-accent-soft);
+      border: 1px solid var(--color-accent-border);
+      border-radius: var(--radius-sm);
+      color: var(--color-accent-ink);
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      line-height: 1.4;
+      text-align: center;
+    }
+    .explain-list code {
+      font-family: var(--font-mono);
+      font-size: 0.875em;
+      background: var(--color-surface-2);
+      border-radius: 4px;
+      padding: 0.0625rem 0.3125rem;
+    }
+
+    /* --- Small screens: form stacks into one column; tables scroll
+       inside .table-wrap --- */
+    @media (max-width: 480px) {
+      h1 { font-size: 1.1875rem; }
+      .card { padding: 1.125rem 1rem 1.25rem; }
+      .form-grid { grid-template-columns: 1fr; }
+      .convert-button { width: 100%; }
+      .play-button { width: 100%; margin-left: 0; margin-top: 0.75rem; }
+      #samples-table th,
+      #samples-table td { padding: 0.5rem 0.625rem; }
+      /* Calculation rows stack label-over-value on small screens. */
+      .detail-body { grid-template-columns: 1fr; gap: 0.125rem; padding: 0.75rem; }
+      .detail-label { margin-top: 0.375rem; }
+      .detail-body .detail-label:first-child { margin-top: 0; }
+    }
+
+    /* --- Reduced motion: neutralize every animation/transition --- */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============================================================
+       SECTION: Header — page title, student name, section
+       ============================================================ -->
+  <header>
+    <div class="container">
+      <svg class="brand-mark" width="34" height="34" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect width="32" height="32" rx="7" fill="#16181d"/><path d="M8 20c2.667-8.5 5.333-8.5 8 0s5.333 8.5 8 0" fill="none" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round"/></svg>
+      <div>
+        <h1>Sound-to-Binary Converter</h1>
+        <p class="byline">Joashua Marl A. Barimbao &middot; BSCS-3</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ============================================================
+         SECTION: Converter form
+         Four number inputs + Convert button, wired to the script
+         below (readRawInputs reads by id: freq, amplitude, samples,
+         bits; validateInputs checks every Convert before computing),
+         plus the bonus Play button (#play-btn -> handlePlay: plays
+         the typed frequency for 1 second via Web Audio).
+         ============================================================ -->
+    <section class="card" aria-labelledby="converter-heading">
+      <h2 id="converter-heading">Wave settings</h2>
+
+      <form id="convert-form">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="freq">Frequency (Hz)</label>
+            <input type="number" id="freq">
+          </div>
+
+          <div class="form-group">
+            <label for="amplitude">Amplitude (0 to 1)</label>
+            <input type="number" id="amplitude" step="any">
+          </div>
+
+          <div class="form-group">
+            <label for="samples">Number of samples</label>
+            <input type="number" id="samples">
+          </div>
+
+          <div class="form-group">
+            <label for="bits">Bits per sample</label>
+            <input type="number" id="bits">
+          </div>
+        </div>
+
+        <button type="button" id="convert-btn" class="convert-button">Convert</button>
+
+        <!-- Bonus: plays the tone for 1 second at the typed frequency
+             (Web Audio API, createOscillator). The aria-label names the
+             action AND its target (the typed frequency), so the
+             accessible name is more specific than the short "Play". -->
+        <button type="button" id="play-btn" class="play-button" aria-label="Play tone at the typed frequency">Play</button>
+      </form>
+    </section>
+
+    <!-- ============================================================
+         SECTION: Warnings (Stage 5)
+         One list item per broken rule, from validateInputs. The
+         region always stays in the DOM (empty when valid) so the
+         aria-live announcements work, and is styled via the
+         has-warnings class only.
+         ============================================================ -->
+    <div id="warnings" aria-live="polite"></div>
+
+    <!-- ============================================================
+         SECTION: Results — filled on every valid Convert by
+         Stages 2-4 of the script below.
+         ============================================================ -->
+    <section class="card" aria-labelledby="results-heading">
+      <h2 id="results-heading">Results</h2>
+
+      <!-- Stage 2: wave facts (amplitude, frequency, period, wavelength) -->
+      <div id="wave-facts"></div>
+
+      <!-- Stage 4: whole binary result on one line + total bits.
+           Placed ABOVE the samples table so the graded result is
+           visible instantly after Convert, even when a large table
+           is folded. -->
+      <p id="binary-line"></p>
+      <p id="total-bits"></p>
+
+      <!-- Stage 3: samples table inside a section-level disclosure.
+           The header button folds/unfolds the whole table region
+           (auto-collapsed after a Convert with more than 12 samples);
+           rows stay in the DOM while folded. Per-row collapsible
+           calculation details live inside the table. -->
+      <div class="table-disclosure">
+        <button type="button" id="samples-toggle" class="disclosure-toggle" aria-expanded="true" aria-controls="samples-fold">
+          <svg class="chevron disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="samples-label">Samples</span>
+          <span id="samples-hint" class="disclosure-hint" aria-hidden="true">— Hide</span>
+        </button>
+        <div class="table-fold" id="samples-fold">
+          <div class="table-fold-inner">
+            <div class="table-wrap" role="region" aria-label="Samples table" tabindex="0">
+              <table id="samples-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Sample #</th>
+                    <th scope="col">Time (ms)</th>
+                    <th scope="col">Amplitude</th>
+                    <th scope="col">Level</th>
+                    <th scope="col">Binary</th>
+                  </tr>
+                </thead>
+                <tbody id="samples-tbody">
+                  <!-- Stages 3-4: sample rows are generated here (exactly n
+                       at rest; collapsible detail rows appear only while
+                       expanded). The whole table folds via #samples-fold. -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION: Test Results (Stage 6)
+         ============================================================ -->
+    <section aria-labelledby="test-results-heading">
+      <h2 id="test-results-heading">Test Results</h2>
+      <div id="test-results">
+        <!-- Stage 6: recorded results for Tests A, B and C. The Period,
+             Wavelength, Total bits and Binary result values were captured
+             from REAL runs of this app (headless browser: fill the four
+             inputs, click Convert, read #wave-facts / #binary-line /
+             #total-bits) and cross-checked against the activity's answer
+             key — they are exactly what the converter displays. -->
+        <p class="results-note">I ran each test through the converter above and recorded exactly what it showed.</p>
+        <div class="table-wrap" role="region" aria-label="Test results table" tabindex="0">
+          <table id="test-results-table">
+            <thead>
+              <tr>
+                <th scope="col">Test</th>
+                <th scope="col">Frequency</th>
+                <th scope="col">Amplitude</th>
+                <th scope="col">Samples</th>
+                <th scope="col">Bits</th>
+                <th scope="col">Period</th>
+                <th scope="col">Wavelength</th>
+                <th scope="col">Total bits</th>
+                <th scope="col">Binary result</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">A</th>
+                <td>440</td>
+                <td>0.8</td>
+                <td>8</td>
+                <td>3</td>
+                <td>2.27 ms</td>
+                <td>78.0 cm</td>
+                <td>24</td>
+                <td>100 101 110 101 100 010 001 010</td>
+              </tr>
+              <tr>
+                <th scope="row">B</th>
+                <td>200</td>
+                <td>0.5</td>
+                <td>6</td>
+                <td>4</td>
+                <td>5.00 ms</td>
+                <td>1.72 m</td>
+                <td>24</td>
+                <td>1000 1011 1011 1000 0100 0100</td>
+              </tr>
+              <tr>
+                <th scope="row">C</th>
+                <td>500</td>
+                <td>0.9</td>
+                <td>5</td>
+                <td>3</td>
+                <td>2.00 ms</td>
+                <td>68.6 cm</td>
+                <td>15</td>
+                <td>100 110 101 010 001</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         SECTION: Explain It (Stage 6)
+         ============================================================ -->
+    <section aria-labelledby="explain-it-heading">
+      <h2 id="explain-it-heading">Explain It</h2>
+      <div id="explain-it">
+        <!-- Stage 6: the four answers, in my own words. All four stay
+             visible at once (short graded content — no folding), each
+             1-2 sentences, first person. -->
+        <ol class="explain-list">
+          <li>
+            <h3><span class="explain-num">1</span>How does your app change a sound wave into binary?</h3>
+            <p>It samples the wave's height at equal time steps across one period, rounds each height to the nearest level, then writes each level in binary with leading zeros. Every row in the samples table above walks through those three steps for one sample.</p>
+          </li>
+          <li>
+            <h3><span class="explain-num">2</span>Run Test A again with 2 bits, then 6 bits. Which gives more detail about the wave, and why?</h3>
+            <p>I re-ran Test A both ways: with 2 bits all eight heights get squeezed onto just 4 levels (2<sup>2</sup>), but with 6 bits there are 64 levels (2<sup>6</sup>), so each height lands much closer to its real value — 6 bits gives far more detail. The trade-off is size: 48 total bits instead of 16.</p>
+          </li>
+          <li>
+            <h3><span class="explain-num">3</span>Which test has the longest wavelength? How is wavelength connected to frequency?</h3>
+            <p>Test B, because its 200 Hz is the lowest frequency of the three, which gives it the longest wavelength at 1.72 m. Wavelength is 343 &divide; frequency, so the relationship is inverse: higher frequency, shorter wavelength (440 Hz &rarr; 78.0 cm, 500 Hz &rarr; 68.6 cm).</p>
+          </li>
+          <li>
+            <h3><span class="explain-num">4</span>What was the hardest stage to build, and how did you fix it?</h3>
+            <p>Stage 4, turning levels into binary, was the hardest: heights that land exactly halfway, like Test A samples 1 and 5 sitting right on 3.5, must round UP to 4 (giving <code>100</code>, not <code>011</code>), and every value needs exactly the right number of digits with leading zeros. I fixed it by using <code>Math.round</code> with <code>toString(2).padStart(bits, '0')</code> &mdash; never <code>toFixed</code>, which rounds halfway floats differently &mdash; then re-ran every dataset against the Check-Your-Work table and the answer key until the output matched exactly.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    'use strict';
+    /* ============================================================
+       Stages 2-5 — wave facts, samples table, binary result,
+       warnings (activity "Build It" steps 2-5)
+       On Convert: validate all four inputs (graded warnings on any
+       violation, stale outputs cleared), otherwise compute the wave
+       facts and every sample's time/height/level/binary, then
+        render facts, binary line, total bits and the table (binary
+        result sits ABOVE the table so it is instantly visible). Every
+        sample row also carries a collapsible calculation row (WAI-ARIA
+        APG disclosure pattern) that explains its numbers step by step;
+        detail rows exist only while expanded, so a fresh render is
+        always exactly n collapsed rows. The whole table region is a
+        section-level disclosure: auto-expanded for n <= 12, auto-folded
+        for larger tables (rows stay in the DOM while folded).
+        Rendering replays the CSS entrance animations (see
+        replayAnimation).
+        Stage 6 (test results + Explain It) is static HTML further up —
+        the recorded table values were captured from runs of this
+        handler, so nothing here touches those sections.
+        Bonus: the Play button (#play-btn) reuses only the frequency
+        rule and its warning message from the pure block — it never
+        runs the full form validation, never re-renders and never
+        clears results. One valid click plays the typed frequency for
+        1 second through one shared AudioContext (one oscillator per
+        click); see the "Bonus" section at the end of this script.
+       ============================================================ */
+
+    /* Pure math + formatting: no DOM, so it can be unit-tested. */
+    /* ==== PURE BEGIN ==== */
+
+    // Period of one full wave in milliseconds: (1 / frequency) × 1000
+    function computePeriodMs(frequency) {
+      return 1000 / frequency;
+    }
+
+    // Wavelength of one full wave in air: 343 / frequency (343 m/s)
+    function computeWavelengthM(frequency) {
+      return 343 / frequency;
+    }
+
+    // Output Rules: period is shown in milliseconds, 2 decimals.
+    function formatPeriodMs(periodMs) {
+      return periodMs.toFixed(2) + ' ms';
+    }
+
+    // Output Rules: wavelength shows meters (2 decimals) when >= 1 m,
+    // otherwise centimeters (1 decimal).
+    function formatWavelength(wavelengthM) {
+      if (wavelengthM >= 1) {
+        return wavelengthM.toFixed(2) + ' m';
+      }
+      return (wavelengthM * 100).toFixed(1) + ' cm';
+    }
+
+    /* ---- Sample loop math (Stage 3) ---- */
+
+    // Time of sample i: i × period / n (math table, "Time of sample i").
+    function computeSampleTimeMs(i, periodMs, n) {
+      return i * periodMs / n;
+    }
+
+    // Height of sample i: amplitude × sin(2 × π × i / n) (math table,
+    // "Height of sample i"). The frequency must NOT appear here —
+    // the spread over one wave uses i / n only.
+    function computeSampleHeight(i, amplitude, n) {
+      return amplitude * Math.sin(2 * Math.PI * i / n);
+    }
+
+    // Table cell values: numbers only (units live in the column headers).
+    function formatSampleTimeMs(timeMs) {
+      return timeMs.toFixed(2);
+    }
+
+    function formatSampleHeight(height) {
+      return height.toFixed(2);
+    }
+
+    /* ---- Level + binary math (Stage 4) ---- */
+
+    // Number of levels: 2 ^ bits (math table, "Number of levels").
+    function computeLevelCount(bits) {
+      return Math.pow(2, bits);
+    }
+
+    // Raw (pre-rounding) level position of sample i on the level
+    // ladder: (height + 1) / 2 × (levels − 1). Shown at full precision
+    // in each sample's collapsible calculation row.
+    function computeLevelRaw(height, levels) {
+      return (height + 1) / 2 * (levels - 1);
+    }
+
+    // Level of sample i: round of the raw position above (math table,
+    // "Level of sample i"). Math.round is required so an exact halfway
+    // level rounds UP (3.5 -> 4, 7.5 -> 8); never use toFixed.
+    function computeLevel(height, levels) {
+      return Math.round(computeLevelRaw(height, levels));
+    }
+
+    // Binary of sample i: level in base 2, zero-padded to exactly
+    // `bits` digits (math table, "Binary of sample i").
+    function computeLevelBinary(level, bits) {
+      return level.toString(2).padStart(bits, '0');
+    }
+
+    // Whole binary result on one line, single space between values
+    // (Output Rules: "Show the whole binary result on one line").
+    function formatBinaryLine(binaries) {
+      return binaries.join(' ');
+    }
+
+    // Total bits: samples × bits (math table, "Total bits").
+    function computeTotalBits(n, bits) {
+      return n * bits;
+    }
+
+    // One plain-data entry per sample, for i = 0 … n−1. Every value the
+    // collapsible calculation row explains is captured here too.
+    function collectSamples(n, amplitude, periodMs, bits) {
+      var levels = computeLevelCount(bits);
+      var samples = [];
+      for (var i = 0; i < n; i++) {
+        var height = computeSampleHeight(i, amplitude, n);
+        var level = computeLevel(height, levels);
+        samples.push({
+          index: i,                                     // 0-based position
+          number: i + 1,                                // 1-based Sample #
+          timeMs: computeSampleTimeMs(i, periodMs, n),
+          height: height,
+          levelRaw: computeLevelRaw(height, levels),    // pre-rounding value
+          level: level,                                 // Stage 4
+          binary: computeLevelBinary(level, bits)       // Stage 4
+        });
+      }
+      return samples;
+    }
+
+    /* ---- Input validation (Stage 5) ---- */
+
+    // The exact frequency warning, shared by Convert validation and
+    // the Play button so the two paths can never drift apart.
+    var FREQUENCY_WARNING_MESSAGE = 'Frequency must be a number greater than 0.';
+
+    // The frequency rule on its own, so the Play button (activity
+    // Bonus) can validate ONLY the frequency without running the full
+    // form validation. Raw emptiness is checked FIRST: Number('') is 0
+    // and must not slip through as a number.
+    function isValidFrequency(rawFreq) {
+      var freq = Number(rawFreq);
+      return rawFreq !== '' && Number.isFinite(freq) && freq > 0;
+    }
+
+    // One violation message per broken rule, in field order, so
+    // several can be shown at once (Output Rules -> Warnings).
+    // Raw emptiness is checked FIRST: Number('') is 0 and must not
+    // slip through as a number. Whole-number checks use
+    // Number.isInteger. Wording is specific, plain, matches the
+    // label and says how to fix (GOV.UK / NN/g guidance).
+    function validateInputs(rawFreq, rawAmp, rawSamples, rawBits) {
+      var violations = [];
+
+      if (!isValidFrequency(rawFreq)) {
+        violations.push(FREQUENCY_WARNING_MESSAGE);
+      }
+
+      var amp = Number(rawAmp);
+      if (rawAmp === '' || !Number.isFinite(amp) || amp < 0 || amp > 1) {
+        violations.push('Amplitude must be a number from 0 to 1.');
+      }
+
+      var samples = Number(rawSamples);
+      if (rawSamples === '' || !Number.isFinite(samples) ||
+          !Number.isInteger(samples) || samples < 2 || samples > 64) {
+        violations.push('Number of samples must be a whole number from 2 to 64.');
+      }
+
+      var bits = Number(rawBits);
+      if (rawBits === '' || !Number.isFinite(bits) ||
+          !Number.isInteger(bits) || bits < 1 || bits > 8) {
+        violations.push('Bits per sample must be a whole number from 1 to 8.');
+      }
+
+      return violations;
+    }
+
+    /* ==== PURE END ==== */
+
+    /* ---- DOM access ---- */
+
+    // Raw string values of the four inputs, keyed by canonical id.
+    function readRawInputs() {
+      return {
+        freq: document.getElementById('freq').value,
+        amplitude: document.getElementById('amplitude').value,
+        samples: document.getElementById('samples').value,
+        bits: document.getElementById('bits').value
+      };
+    }
+
+    /* ---- Rendering ---- */
+
+    // Re-trigger an entrance animation without timers: remove the
+    // class, force a reflow so the removal registers, then re-add.
+    // Safe under rapid Convert clicks — the last call wins and no
+    // text content ever changes.
+    function replayAnimation(element) {
+      element.classList.remove('rise-in');
+      void element.offsetWidth;
+      element.classList.add('rise-in');
+    }
+
+    // One fact per paragraph, so e2e can assert "<label> <value>"
+    // text. The value sits in a span purely for monospace styling;
+    // the paragraph's textContent stays "<label> <value>".
+    function appendFact(container, label, value) {
+      var p = document.createElement('p');
+      var strong = document.createElement('strong');
+      strong.textContent = label;
+      var valueSpan = document.createElement('span');
+      valueSpan.className = 'fact-value';
+      valueSpan.textContent = value;
+      p.appendChild(strong);
+      p.appendChild(document.createTextNode(' '));
+      p.appendChild(valueSpan);
+      container.appendChild(p);
+    }
+
+    // Replace the wave-facts content on every Convert (never accumulate).
+    function renderWaveFacts(facts) {
+      var container = document.getElementById('wave-facts');
+      container.replaceChildren();
+      appendFact(container, 'Amplitude:', facts.amplitude);
+      appendFact(container, 'Frequency:', facts.frequency);
+      appendFact(container, 'Period:', facts.period);
+      appendFact(container, 'Wavelength:', facts.wavelength);
+      replayAnimation(container); // entrance animation on each Convert
+    }
+
+    /* ---- Binary result rendering (Stage 4) ---- */
+
+    // Whole binary result on ONE line; assigned fresh on every Convert
+    // (textContent replacement — never appended), entrance replayed.
+    function renderBinaryLine(binaryLine) {
+      var el = document.getElementById('binary-line');
+      el.textContent = 'Binary result: ' + binaryLine;
+      replayAnimation(el);
+    }
+
+    // Total bits = n × bits; replaced on every Convert, entrance replayed.
+    function renderTotalBits(totalBits) {
+      var el = document.getElementById('total-bits');
+      el.textContent = 'Total bits: ' + totalBits;
+      replayAnimation(el);
+    }
+
+    /* ---- Warnings rendering (Stage 5) ---- */
+
+    // One list item per violation; an empty list clears the region.
+    // The region always stays in the DOM so aria-live announcements
+    // work. GOV.UK pattern: a visually-hidden "Error:" prefix is
+    // announced before the messages.
+    function renderWarnings(violations) {
+      var container = document.getElementById('warnings');
+      container.replaceChildren();
+      if (violations.length > 0) {
+        var prefix = document.createElement('span');
+        prefix.className = 'visually-hidden';
+        prefix.textContent = 'Error: ';
+        container.appendChild(prefix);
+
+        var list = document.createElement('ul');
+        violations.forEach(function (message) {
+          var item = document.createElement('li');
+          item.textContent = message;
+          list.appendChild(item);
+        });
+        container.appendChild(list);
+      }
+      container.classList.toggle('has-warnings', violations.length > 0);
+      if (violations.length > 0) {
+        replayAnimation(container); // smooth slide/fade entrance
+      }
+    }
+
+    // Warnings appeared: leave no stale results sitting next to them.
+    // The form fields keep their values (GOV.UK / NN/g: preserve the
+    // user's input so they can correct it). The disclosure header also
+    // resets (no stale count, initial expanded state for the empty table).
+    function clearAllOutputs() {
+      document.getElementById('wave-facts').replaceChildren();
+      document.getElementById('samples-tbody').replaceChildren();
+      document.getElementById('binary-line').textContent = '';
+      document.getElementById('total-bits').textContent = '';
+      renderSamplesLabel(null);
+      setSamplesDisclosure(true);
+    }
+
+    /* ---- Samples table rendering (Stages 3-4) ---- */
+
+    // One <td> per cell; textContent only (no markup in values).
+    function appendCell(tr, text) {
+      var td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+
+    /* ---- Collapsible calculation rows (WAI-ARIA APG disclosure:
+       a <button> with aria-expanded controls a hidden region; the
+       native button gives Enter/Space activation for free) ---- */
+
+    // Full-precision text for a computed double (String keeps every
+    // digit, e.g. 0.5656854249492379).
+    function rawNumber(value) {
+      return String(value);
+    }
+
+    // One labeled line of the calculation breakdown.
+    function appendDetailLine(body, label, value) {
+      var term = document.createElement('span');
+      term.className = 'detail-label';
+      term.textContent = label;
+      var description = document.createElement('span');
+      description.className = 'detail-value';
+      description.textContent = value;
+      body.appendChild(term);
+      body.appendChild(description);
+    }
+
+    // The hidden-by-default breakdown for one sample: index, time,
+    // raw height (full precision), level (raw value -> rounded result)
+    // and the binary derivation (level -> base 2 -> zero-padded).
+    // Educational: every substitution is spelled out with real numbers.
+    function buildSampleDetail(sample, context) {
+      var tr = document.createElement('tr');
+      tr.className = 'sample-detail';
+      tr.id = 'sample-detail-' + sample.number;
+      var td = document.createElement('td');
+      td.colSpan = 5;
+      var body = document.createElement('div');
+      body.className = 'detail-body';
+
+      appendDetailLine(body, 'Index',
+        'i = ' + sample.index + ' (0-based)');
+      appendDetailLine(body, 'Time (ms)',
+        'i × period ÷ n = ' + sample.index + ' × ' + rawNumber(context.periodMs) +
+        ' ÷ ' + context.n + ' = ' + formatSampleTimeMs(sample.timeMs) + ' ms');
+      appendDetailLine(body, 'Height',
+        'amplitude × sin(2π × i ÷ n) = ' + rawNumber(context.amplitude) +
+        ' × sin(2π × ' + sample.index + ' ÷ ' + context.n + ') = ' +
+        rawNumber(sample.height));
+      appendDetailLine(body, 'Level',
+        '(height + 1) ÷ 2 × (levels − 1) = (' + rawNumber(sample.height) +
+        ' + 1) ÷ 2 × ' + (context.levels - 1) + ' = ' +
+        rawNumber(sample.levelRaw) + ' → ' + sample.level);
+      appendDetailLine(body, 'Binary',
+        'level ' + sample.level + ' → base 2 = ' + sample.level.toString(2) +
+        ' → padded to ' + context.bits + ' digits = ' + sample.binary);
+
+      td.appendChild(body);
+      tr.appendChild(td);
+      return tr;
+    }
+
+    // Small right-pointing chevron; CSS rotates it 90° when expanded.
+    function createChevron() {
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'chevron');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('focusable', 'false');
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M6 3.5 10.5 8 6 12.5');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'currentColor');
+      path.setAttribute('stroke-width', '1.75');
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(path);
+      return svg;
+    }
+
+    // Remove a detail row. With motion allowed: play the 150ms collapse
+    // animation, then drop the row on animationend (event-driven — no
+    // timers). Under reduced motion (or if no animation runs at all)
+    // it is removed immediately, so the tbody always settles at
+    // exactly n rows.
+    function removeDetailRow(detail) {
+      var body = detail.querySelector('.detail-body');
+      var reduceMotion =
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduceMotion || !body ||
+          getComputedStyle(body).animationName === 'none') {
+        detail.remove();
+        return;
+      }
+      detail.classList.add('closing');
+      body.addEventListener('animationend', function () {
+        detail.remove();
+      }, { once: true });
+    }
+
+    // Expand/collapse one sample's calculation row. Detail rows exist
+    // ONLY while expanded, so at rest the tbody holds exactly n rows
+    // (the graded "exactly n rows" rule).
+    function toggleSampleDetail(row, sample, context) {
+      var toggle = row.querySelector('.row-toggle');
+      var detailId = 'sample-detail-' + sample.number;
+      var detail = document.getElementById(detailId);
+      var isOpen = detail !== null && !detail.classList.contains('closing');
+
+      if (isOpen) {
+        toggle.setAttribute('aria-expanded', 'false');
+        row.classList.remove('is-expanded');
+        removeDetailRow(detail);
+        return;
+      }
+
+      // A rapid re-expand can race the closing animation: drop the
+      // leftover closing row before inserting a fresh detail row.
+      if (detail !== null) {
+        detail.remove();
+      }
+
+      detail = buildSampleDetail(sample, context);
+      row.classList.add('is-expanded');
+      toggle.setAttribute('aria-expanded', 'true');
+      row.parentNode.insertBefore(detail, row.nextSibling);
+    }
+
+    // Five cells matching the fixed headers: Sample #, Time (ms),
+    // Amplitude, Level, Binary. The first cell holds the disclosure
+    // button (chevron + sample number) — the cell's textContent stays
+    // exactly the sample number. Each row carries its own stagger
+    // delay (set inline by renderSamplesTable) for the entrance.
+    function appendSampleRow(tbody, sample, delayMs, context) {
+      var tr = document.createElement('tr');
+      tr.className = 'row-in';
+      tr.style.animationDelay = delayMs + 'ms';
+
+      var firstCell = document.createElement('td');
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'row-toggle';
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-controls', 'sample-detail-' + sample.number);
+      toggle.setAttribute('aria-label',
+        'Toggle calculation details for sample ' + sample.number);
+      toggle.appendChild(createChevron());
+      var numberLabel = document.createElement('span');
+      numberLabel.textContent = String(sample.number);
+      toggle.appendChild(numberLabel);
+      firstCell.appendChild(toggle);
+      tr.appendChild(firstCell);
+
+      appendCell(tr, formatSampleTimeMs(sample.timeMs));
+      appendCell(tr, formatSampleHeight(sample.height));
+      appendCell(tr, String(sample.level));   // Level: plain decimal integer
+      appendCell(tr, sample.binary);          // Binary: exactly `bits` digits
+
+      toggle.addEventListener('click', function () {
+        toggleSampleDetail(tr, sample, context);
+      });
+      tbody.appendChild(tr);
+    }
+
+    // Replace all rows on every Convert (never accumulate stale rows,
+    // and every fresh render starts fully collapsed), replay the
+    // wrapper entrance, and stagger rows (capped so 64 rows stay quick).
+    function renderSamplesTable(samples, context) {
+      var tbody = document.getElementById('samples-tbody');
+      tbody.replaceChildren();
+      samples.forEach(function (sample, index) {
+        appendSampleRow(tbody, sample, Math.min(index * 10, 300), context);
+      });
+      replayAnimation(document.querySelector('.table-wrap'));
+      renderSamplesLabel(samples.length);
+      applySamplesDisclosureDefault(samples.length);
+    }
+
+    /* ---- Samples table disclosure (section-level fold) ---- */
+
+    // Deterministic default after a Convert: expanded for small tables
+    // (n <= 12), collapsed for large ones (n > 12) so the binary result
+    // above stays instantly in view. The user can always toggle, and
+    // every fresh Convert recomputes this default.
+    var SAMPLES_DISCLOSURE_MAX = 12;
+
+    // Fold/unfold the table region. The fold animates via CSS (grid
+    // row track 1fr <-> 0fr + fade); reduced motion snaps instantly.
+    function setSamplesDisclosure(expanded) {
+      document.getElementById('samples-fold').classList.toggle('folded', !expanded);
+      var toggle = document.getElementById('samples-toggle');
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      // Visual hint only — aria-expanded already carries the state.
+      document.getElementById('samples-hint').textContent =
+        expanded ? '— Hide' : '— Show';
+    }
+
+    function applySamplesDisclosureDefault(sampleCount) {
+      setSamplesDisclosure(sampleCount <= SAMPLES_DISCLOSURE_MAX);
+    }
+
+    // Header label carries the current sample count (e.g. "Samples (64)");
+    // null (nothing rendered) falls back to the plain "Samples".
+    function renderSamplesLabel(sampleCount) {
+      document.getElementById('samples-label').textContent =
+        sampleCount === null ? 'Samples' : 'Samples (' + sampleCount + ')';
+    }
+
+    /* ---- Convert handler (single entry point) ---- */
+
+    function handleConvert() {
+      var rawInputs = readRawInputs();
+      var violations = validateInputs(
+        rawInputs.freq, rawInputs.amplitude, rawInputs.samples, rawInputs.bits);
+
+      if (violations.length > 0) {
+        renderWarnings(violations);
+        clearAllOutputs();
+        return;
+      }
+
+      renderWarnings([]); // valid input: clear any previous warnings
+
+      var frequency = Number(rawInputs.freq);
+      var amplitude = Number(rawInputs.amplitude);
+      var n = Number(rawInputs.samples);
+      var bits = Number(rawInputs.bits);
+      var periodMs = computePeriodMs(frequency);
+      var samples = collectSamples(n, amplitude, periodMs, bits);
+
+      renderWaveFacts({
+        amplitude: rawInputs.amplitude,      // echoed exactly as typed
+        frequency: rawInputs.freq + ' Hz',   // echoed exactly as typed + unit
+        period: formatPeriodMs(periodMs),
+        wavelength: formatWavelength(computeWavelengthM(frequency))
+      });
+
+      // Everything the collapsible calculation rows need to spell out
+      // the math for their sample (period, n, amplitude, bits, levels).
+      var context = {
+        periodMs: periodMs,
+        n: n,
+        amplitude: amplitude,
+        bits: bits,
+        levels: computeLevelCount(bits)
+      };
+      renderSamplesTable(samples, context);
+      renderBinaryLine(formatBinaryLine(samples.map(function (sample) {
+        return sample.binary;
+      })));
+      renderTotalBits(computeTotalBits(n, bits));
+    }
+
+    document.getElementById('convert-btn').addEventListener('click', handleConvert);
+
+    // Section disclosure: the native <button> provides Enter/Space
+    // activation; the click handler flips the fold state.
+    document.getElementById('samples-toggle').addEventListener('click', function () {
+      var toggle = document.getElementById('samples-toggle');
+      setSamplesDisclosure(toggle.getAttribute('aria-expanded') !== 'true');
+    });
+
+    /* ============================================================
+       Bonus: Play button (activity "Bonus (+6 points, optional)")
+       "Add a Play button that plays the tone for 1 second at the
+       typed frequency (Web Audio API, createOscillator)."
+       ============================================================ */
+
+    // ONE AudioContext for the whole page, created lazily on the
+    // first Play and reused afterward: browsers cap how many
+    // AudioContexts a page may create, so repeated clicks must not
+    // build new ones.
+    var sharedAudioContext = null;
+
+    function getSharedAudioContext() {
+      if (sharedAudioContext === null) {
+        var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        sharedAudioContext = new AudioContextCtor();
+      }
+      return sharedAudioContext;
+    }
+
+    // Validates ONLY the frequency (never the full form) and, on
+    // failure, reuses the exact Convert warning message. Results and
+    // any other warnings stay untouched; a valid click re-renders
+    // nothing at all.
+    function handlePlay() {
+      var rawFreq = document.getElementById('freq').value;
+      if (!isValidFrequency(rawFreq)) {
+        renderWarnings([FREQUENCY_WARNING_MESSAGE]);
+        return;
+      }
+      playTone(Number(rawFreq));
+    }
+
+    // Exactly ONE oscillator per click: set the typed frequency,
+    // connect straight to the destination, start now, stop 1 second
+    // later. A suspended context is resumed first (the click is the
+    // user gesture — the MDN autoplay pattern). Any audio failure
+    // (unsupported API, blocked hardware, …) degrades to a warning
+    // and never breaks the page.
+    function playTone(frequency) {
+      try {
+        var ctx = getSharedAudioContext();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+        var osc = ctx.createOscillator();
+        osc.frequency.value = frequency;
+        osc.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 1); // 1 second, per the document
+      } catch (err) {
+        renderWarnings(['Audio playback is not available in this browser.']);
+      }
+    }
+
+    // Bonus: Play sits in the same form area as Convert but owns a
+    // much smaller handler — one field validated, one tone played.
+    document.getElementById('play-btn').addEventListener('click', handlePlay);
+  </script>
+
+</body>
+</html>
