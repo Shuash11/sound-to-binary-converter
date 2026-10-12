@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  Sound-to-Binary Converter — Stages 2-5 (wave facts, samples table,
+  Sound-to-Binary Converter: Stages 2-5 (wave facts, samples table,
   binary result, warnings + design)
 
   Single self-contained file: inline CSS + inline JavaScript, no external
@@ -15,7 +15,7 @@
                         + collapsible samples table section (auto-folded
                         for large n, binary result kept above the table)
            Stage 6  -> test/explain    (div#test-results table, recorded
-                        from real app runs; div#explain-it Q&A list —
+                        from real app runs; div#explain-it Q&A list,
                         both static HTML, no script involvement)
            Bonus   -> play tone       (button#play-btn: plays the typed
                         frequency for 1 s through ONE shared Web Audio
@@ -32,16 +32,17 @@
 
   <style>
     /* ============================================================
-       Design system (Stage 5, modern pass) — crisp light theme,
+       Design system (Stage 5, modern pass): crisp light theme,
        one blue accent, soft layered depth, subtle motion.
        References: Vercel Geist (gray-step surfaces/borders/text,
        6/12px radius scale, translucent shadows, black primary
        button) and modern dashboard data-table patterns (right-
        aligned monospace numerics, hover rows, disclosure chevrons
-       for expandable rows); error styling and a11y patterns from
-       GOV.UK + NN/g; the expand/collapse interaction follows the
-       WAI-ARIA APG disclosure pattern. All motion is CSS-only
-       and disabled under prefers-reduced-motion.
+       for expandable rows); natural inline error styling with
+       a11y visibility guidance from NN/g; the expand/collapse
+       interaction follows the WAI-ARIA APG disclosure pattern.
+       All motion is CSS-only and disabled under
+       prefers-reduced-motion.
        ============================================================ */
 
     /* --- Tokens (Geist-style gray steps + one accent scale) --- */
@@ -61,8 +62,6 @@
       --color-accent-soft: #eef4ff; /* accent-100: chip background */
       --color-accent-border: #d6e4fd;
       --color-error: #b42318;
-      --color-error-bg: #fef3f2;
-      --color-error-border: #f9d9d7;
       --radius-sm: 6px;             /* Geist base material */
       --radius-md: 12px;            /* Geist raised material */
       --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
@@ -237,16 +236,10 @@
       outline-offset: 2px;
     }
 
-    /* --- Warnings (GOV.UK error pattern + NN/g visibility:
-       color + border + glyph, never color alone) --- */
+    /* --- Warnings (natural inline error text + NN/g visibility:
+       red text + glyph, never color alone) --- */
     #warnings.has-warnings {
       margin: 1.5rem 0;
-      padding: 0.875rem 1rem;
-      background: var(--color-error-bg);
-      border: 1px solid var(--color-error-border);
-      border-left: 3px solid var(--color-error);
-      border-radius: var(--radius-md);
-      color: var(--color-error);
     }
     #warnings.has-warnings ul {
       margin: 0;
@@ -257,6 +250,7 @@
       position: relative;
       margin: 0.25rem 0;
       padding-left: 1.5rem;
+      color: var(--color-error);
       font-weight: 500;
       font-size: 0.9375rem;
     }
@@ -374,7 +368,7 @@
     /* Detail row: one colspan=5 cell with a quiet background and a
        labeled derivation grid. Opens with a fade + 4px settle; closes
        with a fade-out, after which the row is removed (animationend,
-       event-driven — no timers). Reduced motion: instant. */
+       event-driven, no timers). Reduced motion: instant. */
     #samples-table tr.sample-detail > td {
       padding: 0;
       background: #fafbfd;
@@ -483,7 +477,7 @@
       color: var(--color-accent-ink);
       overflow-wrap: anywhere; /* long binary strings wrap safely */
     }
-    /* After an invalid Convert the line is cleared — hide its empty
+    /* After an invalid Convert the line is cleared, so hide its empty
        chip entirely (element stays in the DOM, textContent stays ''). */
     #binary-line:empty { display: none; }
     #total-bits {
@@ -538,7 +532,7 @@
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
-    /* Test letter: the row's identifier (NN/g data tables) — body
+    /* Test letter: the row's identifier (NN/g data tables): body
        font, semibold, and the column keeps a fixed narrow width. */
     #test-results-table thead th:first-child { width: 3rem; }
     #test-results-table tbody th {
@@ -554,7 +548,7 @@
     }
 
     /* --- Stage 6: Explain It (Q&A list) ---
-       All four answers stay visible — no folding (NN/g: for short,
+       All four answers stay visible; no folding (NN/g: for short,
        must-read content, scrolling beats hiding it behind clicks).
        Quiet separators between answers; numbered chips reuse the
        accent-soft material from the binary result line. */
@@ -625,7 +619,7 @@
 <body>
 
   <!-- ============================================================
-       SECTION: Header — page title, student name, section
+       SECTION: Header (page title, student name, section)
        ============================================================ -->
   <header>
     <div class="container">
@@ -693,8 +687,8 @@
     <div id="warnings" aria-live="polite"></div>
 
     <!-- ============================================================
-         SECTION: Results — filled on every valid Convert by
-         Stages 2-4 of the script below.
+         SECTION: Results (filled on every valid Convert by
+         Stages 2-4 of the script below).
          ============================================================ -->
     <section class="card" aria-labelledby="results-heading">
       <h2 id="results-heading">Results</h2>
@@ -718,7 +712,7 @@
         <button type="button" id="samples-toggle" class="disclosure-toggle" aria-expanded="true" aria-controls="samples-fold">
           <svg class="chevron disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span id="samples-label">Samples</span>
-          <span id="samples-hint" class="disclosure-hint" aria-hidden="true">— Hide</span>
+          <span id="samples-hint" class="disclosure-hint" aria-hidden="true">Hide</span>
         </button>
         <div class="table-fold" id="samples-fold">
           <div class="table-fold-inner">
@@ -756,7 +750,7 @@
              from REAL runs of this app (headless browser: fill the four
              inputs, click Convert, read #wave-facts / #binary-line /
              #total-bits) and cross-checked against the activity's answer
-             key — they are exactly what the converter displays. -->
+             key; they are exactly what the converter displays. -->
         <p class="results-note">I ran each test through the converter above and recorded exactly what it showed.</p>
         <div class="table-wrap" role="region" aria-label="Test results table" tabindex="0">
           <table id="test-results-table">
@@ -820,7 +814,7 @@
       <h2 id="explain-it-heading">Explain It</h2>
       <div id="explain-it">
         <!-- Stage 6: the four answers, in my own words. All four stay
-             visible at once (short graded content — no folding), each
+             visible at once (short graded content, no folding), each
              1-2 sentences, first person. -->
         <ol class="explain-list">
           <li>
@@ -829,7 +823,7 @@
           </li>
           <li>
             <h3><span class="explain-num">2</span>Run Test A again with 2 bits, then 6 bits. Which gives more detail about the wave, and why?</h3>
-            <p>I re-ran Test A both ways: with 2 bits all eight heights get squeezed onto just 4 levels (2<sup>2</sup>), but with 6 bits there are 64 levels (2<sup>6</sup>), so each height lands much closer to its real value — 6 bits gives far more detail. The trade-off is size: 48 total bits instead of 16.</p>
+            <p>I re-ran Test A both ways: with 2 bits all eight heights get squeezed onto just 4 levels (2<sup>2</sup>), but with 6 bits there are 64 levels (2<sup>6</sup>), so each height lands much closer to its real value, and 6 bits gives far more detail. The trade-off is size: 48 total bits instead of 16.</p>
           </li>
           <li>
             <h3><span class="explain-num">3</span>Which test has the longest wavelength? How is wavelength connected to frequency?</h3>
@@ -837,7 +831,7 @@
           </li>
           <li>
             <h3><span class="explain-num">4</span>What was the hardest stage to build, and how did you fix it?</h3>
-            <p>Stage 4, turning levels into binary, was the hardest: heights that land exactly halfway, like Test A samples 1 and 5 sitting right on 3.5, must round UP to 4 (giving <code>100</code>, not <code>011</code>), and every value needs exactly the right number of digits with leading zeros. I fixed it by using <code>Math.round</code> with <code>toString(2).padStart(bits, '0')</code> &mdash; never <code>toFixed</code>, which rounds halfway floats differently &mdash; then re-ran every dataset against the Check-Your-Work table and the answer key until the output matched exactly.</p>
+            <p>Stage 4, turning levels into binary, was the hardest: heights that land exactly halfway, like Test A samples 1 and 5 sitting right on 3.5, must round UP to 4 (giving <code>100</code>, not <code>011</code>), and every value needs exactly the right number of digits with leading zeros. I fixed it by using <code>Math.round</code> with <code>toString(2).padStart(bits, '0')</code>, never <code>toFixed</code>, which rounds halfway floats differently, then re-ran every dataset against the Check-Your-Work table and the answer key until the output matched exactly.</p>
           </li>
         </ol>
       </div>
@@ -848,7 +842,7 @@
   <script>
     'use strict';
     /* ============================================================
-       Stages 2-5 — wave facts, samples table, binary result,
+       Stages 2-5: wave facts, samples table, binary result,
        warnings (activity "Build It" steps 2-5)
        On Convert: validate all four inputs (graded warnings on any
        violation, stale outputs cleared), otherwise compute the wave
@@ -863,11 +857,11 @@
         for larger tables (rows stay in the DOM while folded).
         Rendering replays the CSS entrance animations (see
         replayAnimation).
-        Stage 6 (test results + Explain It) is static HTML further up —
+        Stage 6 (test results + Explain It) is static HTML further up;
         the recorded table values were captured from runs of this
         handler, so nothing here touches those sections.
         Bonus: the Play button (#play-btn) reuses only the frequency
-        rule and its warning message from the pure block — it never
+        rule and its warning message from the pure block: it never
         runs the full form validation, never re-renders and never
         clears results. One valid click plays the typed frequency for
         1 second through one shared AudioContext (one oscillator per
@@ -909,7 +903,7 @@
     }
 
     // Height of sample i: amplitude × sin(2 × π × i / n) (math table,
-    // "Height of sample i"). The frequency must NOT appear here —
+    // "Height of sample i"). The frequency must NOT appear here:
     // the spread over one wave uses i / n only.
     function computeSampleHeight(i, amplitude, n) {
       return amplitude * Math.sin(2 * Math.PI * i / n);
@@ -1049,7 +1043,7 @@
 
     // Re-trigger an entrance animation without timers: remove the
     // class, force a reflow so the removal registers, then re-add.
-    // Safe under rapid Convert clicks — the last call wins and no
+    // Safe under rapid Convert clicks: the last call wins and no
     // text content ever changes.
     function replayAnimation(element) {
       element.classList.remove('rise-in');
@@ -1087,7 +1081,7 @@
     /* ---- Binary result rendering (Stage 4) ---- */
 
     // Whole binary result on ONE line; assigned fresh on every Convert
-    // (textContent replacement — never appended), entrance replayed.
+    // (textContent replacement, never appended), entrance replayed.
     function renderBinaryLine(binaryLine) {
       var el = document.getElementById('binary-line');
       el.textContent = 'Binary result: ' + binaryLine;
@@ -1228,7 +1222,7 @@
     }
 
     // Remove a detail row. With motion allowed: play the 150ms collapse
-    // animation, then drop the row on animationend (event-driven — no
+    // animation, then drop the row on animationend (event-driven, no
     // timers). Under reduced motion (or if no animation runs at all)
     // it is removed immediately, so the tbody always settles at
     // exactly n rows.
@@ -1277,7 +1271,7 @@
 
     // Five cells matching the fixed headers: Sample #, Time (ms),
     // Amplitude, Level, Binary. The first cell holds the disclosure
-    // button (chevron + sample number) — the cell's textContent stays
+    // button (chevron + sample number); the cell's textContent stays
     // exactly the sample number. Each row carries its own stagger
     // delay (set inline by renderSamplesTable) for the entrance.
     function appendSampleRow(tbody, sample, delayMs, context) {
@@ -1339,9 +1333,9 @@
       document.getElementById('samples-fold').classList.toggle('folded', !expanded);
       var toggle = document.getElementById('samples-toggle');
       toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      // Visual hint only — aria-expanded already carries the state.
+      // Visual hint only; aria-expanded already carries the state.
       document.getElementById('samples-hint').textContent =
-        expanded ? '— Hide' : '— Show';
+        expanded ? 'Hide' : 'Show';
     }
 
     function applySamplesDisclosureDefault(sampleCount) {
@@ -1445,7 +1439,7 @@
     // Exactly ONE oscillator per click: set the typed frequency,
     // connect straight to the destination, start now, stop 1 second
     // later. A suspended context is resumed first (the click is the
-    // user gesture — the MDN autoplay pattern). Any audio failure
+    // user gesture, per the MDN autoplay pattern). Any audio failure
     // (unsupported API, blocked hardware, …) degrades to a warning
     // and never breaks the page.
     function playTone(frequency) {
@@ -1465,7 +1459,7 @@
     }
 
     // Bonus: Play sits in the same form area as Convert but owns a
-    // much smaller handler — one field validated, one tone played.
+     // much smaller handler: one field validated, one tone played.
     document.getElementById('play-btn').addEventListener('click', handlePlay);
   </script>
 
